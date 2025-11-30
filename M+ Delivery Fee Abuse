@@ -1,0 +1,92 @@
+-- Finds Marketplace+ restaurants (created in 2025) that meet specific order criteria (2025 Plus customer, delivered)
+-- and where the count of delivered orders from 'new' customers outweighs 'old' customers.
+
+WITH filtered_orders AS (
+
+    SELECT
+          A.ID                       AS order_id
+        , A.USER_ID                  AS user_id
+        , A.RESTAURANT_ID            AS restaurant_id
+        , A.RESTAURANT_NAME
+        , A.RESTAURANT_COMPANY_NAME
+        , A.RESTAURANT_TYPE
+        , A.DELIVERY_FEE
+        , A.TOTAL_VALUE
+    FROM production.denormalised.orders AS A
+    WHERE
+
+        A.ORDER_DATE >= TO_DATE('2025-01-01')
+        AND A.ORDER_DATE <  TO_DATE('2026-01-01')
+
+        AND A.FULFILLMENT_TYPE = 'Restaurant'
+        AND A.CUSTOMER_TYPE    = 'Plus'
+        AND A.RESTAURANT_TYPE  = 'Marketplace +' -- Added specific restaurant type filter
+        AND A.COUNTRY_NAME IN (
+            'UK','France','Italy','Belgium',
+            'Ireland','Kuwait','United Arab Emirates'
+        )
+        AND A.DELIVERY_FEE >= 2 
+        AND A.STATUS = 'DELIVERED' 
+),
+filtered_restaurants AS (
+
+    SELECT
+          B.ID
+        , B.PHONE
+        , B.EMAIL
+        , B.ACTIVE
+        , B.CREATED_AT
+    FROM PRODUCTION.ORDERWEB.RESTAURANT_ACCOUNT AS B
+    WHERE
+        B.CREATED_AT >= TO_DATE('2025-01-01')
+        AND B.CREATED_AT <  TO_DATE('2026-01-01')
+)
+
+SELECT
+    fr.ID AS Restaurant_ID
+    , fo.RESTAURANT_NAME
+    , fo.RESTAURANT_COMPANY_NAME
+    , fo.RESTAURANT_TYPE
+    , fr.PHONE AS PX_Phone
+    , fr.EMAIL AS PX_Email
+    , fr.ACTIVE AS PX_Acct_Active
+    , fr.CREATED_AT AS PX_Creation_Date
+    , fo.DELIVERY_FEE AS PX_Delivery_Fee
+
+    -- 1. Orders from New Customers 
+    , COUNT(CASE WHEN C.CREATED_AT >= ADD_MONTHS(CURRENT_DATE(), -12) THEN fo.order_id END) AS new_customer_orders
+    -- 2. Total Orders
+    , COUNT(DISTINCT fo.order_id) AS Total_Orders
+    -- 3. Orders from NC Percentage Calculation
+    , ROUND(
+        (COUNT(CASE WHEN C.CREATED_AT >= ADD_MONTHS(CURRENT_DATE(), -12) THEN fo.order_id END) ::FLOAT /
+        NULLIF(COUNT(DISTINCT fo.order_id), 0)) * 100
+    , 0) ::INT AS New_Customer_Orders_Pct
+    , SUM(fo.TOTAL_VALUE) AS Total_Amount
+    , COUNT(DISTINCT CASE WHEN C.CREATED_AT >= ADD_MONTHS(CURRENT_DATE(), -12) THEN C.ID END) AS new_customer_count_unique
+    , COUNT(DISTINCT CASE WHEN C.CREATED_AT < ADD_MONTHS(CURRENT_DATE(), -12) THEN C.ID END) AS old_customer_count_unique
+    , COUNT(DISTINCT fo.user_id) AS Total_Customers 
+
+FROM filtered_orders fo
+INNER JOIN filtered_restaurants fr
+    ON fo.restaurant_id = fr.ID
+INNER JOIN production.orderweb.users AS C 
+    ON fo.user_id = C.ID
+    
+GROUP BY
+    fr.ID
+    , fo.RESTAURANT_NAME
+    , fo.RESTAURANT_COMPANY_NAME
+    , fo.RESTAURANT_TYPE
+    , fr.PHONE
+    , fr.EMAIL
+    , fr.ACTIVE
+    , fr.CREATED_AT
+    , fo.DELIVERY_FEE
+-- Filters results where the count of delivered orders from new customers is greater than old customers.
+HAVING
+    COUNT(CASE WHEN C.CREATED_AT >= ADD_MONTHS(CURRENT_DATE(), -12) THEN fo.order_id END) >
+    COUNT(CASE WHEN C.CREATED_AT < ADD_MONTHS(CURRENT_DATE(), -12) THEN fo.order_id END)
+
+ORDER BY
+    PX_Delivery_Fee DESC;
