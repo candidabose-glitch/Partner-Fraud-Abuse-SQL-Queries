@@ -1,0 +1,164 @@
+-- Restaurants having customers with high % of EFWs on Delivered Orders (2025) where EFW rate is>=20%
+
+WITH filtered_orders AS (
+    SELECT
+        o.ID                           AS ORDER_ID,
+        o.RESTAURANT_ID,
+        o.RESTAURANT_NAME,
+        o.RESTAURANT_COMPANY_NAME,
+        o.RESTAURANT_TYPE,
+        o.ORDER_FULFILLMENT
+    FROM production.denormalised.orders AS o
+    WHERE 
+        o.COUNTRY_NAME IN (
+            'UK','France','Italy','Belgium','Ireland','Kuwait','United Arab Emirates'
+        )
+        AND o.ORDER_DATE   >= DATE '2025-01-01'
+        AND o.ORDER_DATE   <  DATE '2026-01-01'
+        AND o.STATUS = 'DELIVERED'
+),
+
+joined_data AS (
+    SELECT
+        fo.RESTAURANT_ID,
+        fo.RESTAURANT_NAME,
+        fo.RESTAURANT_COMPANY_NAME,
+        fo.RESTAURANT_TYPE,
+        fo.ORDER_FULFILLMENT,
+        fo.ORDER_ID,
+        fp.USER_ID,
+        fp.FRAUD_CLAIM_ID,
+        fp.GTV,
+        fp.CHARGEBACK_AMOUNT_LOCAL,
+        ra.CREATED_AT AS RESTAURANT_CREATED_AT
+    FROM filtered_orders fo
+    LEFT JOIN production.denormalised.payment_transactions fp
+        ON  fo.ORDER_ID = fp.ORDER_ID
+        AND fo.RESTAURANT_ID = fp.RESTAURANT_ID
+    JOIN production.orderweb.restaurant_account ra
+        ON fo.RESTAURANT_ID = ra.ID
+),
+
+restaurant_stats AS (
+    SELECT
+        RESTAURANT_ID,
+        RESTAURANT_NAME,
+        RESTAURANT_COMPANY_NAME,
+        RESTAURANT_TYPE,
+        ORDER_FULFILLMENT,
+        MIN(RESTAURANT_CREATED_AT)            AS RX_FIRST_CREATION_DATE,
+        COUNT(DISTINCT ORDER_ID)              AS TOTAL_DELIVERED_ORDERS,   -- all delivered orders
+        COUNT(DISTINCT USER_ID)               AS TOTAL_CUSTOMERS,
+        COUNT(DISTINCT CASE 
+                WHEN FRAUD_CLAIM_ID IS NOT NULL THEN FRAUD_CLAIM_ID 
+            END)                              AS EFWS,                     -- only orders with EFWs
+        SUM(GTV)                              AS TOTAL_AMOUNT,
+        SUM(CHARGEBACK_AMOUNT_LOCAL)          AS TOTAL_CHARGEBACK_AMOUNT,
+        ROUND(
+            100.0 * COUNT(DISTINCT CASE 
+                      WHEN FRAUD_CLAIM_ID IS NOT NULL THEN FRAUD_CLAIM_ID 
+                  END)
+            / NULLIF(COUNT(DISTINCT ORDER_ID), 0),
+            2
+        ) AS EFW_RATE                        
+    FROM joined_data
+    GROUP BY
+        RESTAURANT_ID,
+        RESTAURANT_NAME,
+        RESTAURANT_COMPANY_NAME,
+        RESTAURANT_TYPE,
+        ORDER_FULFILLMENT
+)
+
+SELECT
+    RESTAURANT_ID,
+    RESTAURANT_NAME,
+    RESTAURANT_COMPANY_NAME,
+    RESTAURANT_TYPE,
+    ORDER_FULFILLMENT,
+    RX_FIRST_CREATION_DATE AS RX_CREATION_DATE,
+    TOTAL_DELIVERED_ORDERS,
+    TOTAL_CUSTOMERS,
+    EFWS,
+    TOTAL_AMOUNT,
+    TOTAL_CHARGEBACK_AMOUNT,
+    EFW_RATE
+FROM restaurant_stats
+WHERE 
+    TOTAL_DELIVERED_ORDERS >= 5      
+    AND EFW_RATE >= 20                
+
+    -- restaurants created in 2025 
+    AND RX_FIRST_CREATION_DATE >= DATE '2025-01-01'
+    AND RX_FIRST_CREATION_DATE <  DATE '2026-01-01'
+
+    -- brand exclusions (partial match, case-insensitive)
+    AND RESTAURANT_NAME NOT ILIKE '%pepe''s%'
+    AND RESTAURANT_NAME NOT ILIKE '%kfc%'
+    AND RESTAURANT_NAME NOT ILIKE '%burger king%'
+    AND RESTAURANT_NAME NOT ILIKE '%carrefour%'
+    AND RESTAURANT_NAME NOT ILIKE '%one stop%'
+    AND RESTAURANT_NAME NOT ILIKE '%wingstop%'
+    AND RESTAURANT_NAME NOT ILIKE '%morrisons%'
+    AND RESTAURANT_NAME NOT ILIKE '%perfume shop%'
+    AND RESTAURANT_NAME NOT ILIKE '%asda%'
+    AND RESTAURANT_NAME NOT ILIKE '%chipotle%'
+    AND RESTAURANT_NAME NOT ILIKE '%auchan%'
+    AND RESTAURANT_NAME NOT ILIKE '%applebee%'
+    AND RESTAURANT_NAME NOT ILIKE '%big m%'
+    AND RESTAURANT_NAME NOT ILIKE '%boots%'
+    AND RESTAURANT_NAME NOT ILIKE '%m&s%'
+    AND RESTAURANT_NAME NOT ILIKE '%burger & sauce%'
+    AND RESTAURANT_NAME NOT ILIKE '%chaiw%'
+    AND RESTAURANT_NAME NOT ILIKE '%cheatmeal%'
+    AND RESTAURANT_NAME NOT ILIKE '%chick filler%'
+    AND RESTAURANT_NAME NOT ILIKE '%chicken cottage%'
+    AND RESTAURANT_NAME NOT ILIKE '%chicken street%'
+    AND RESTAURANT_NAME NOT ILIKE '%co-op%'
+    AND RESTAURANT_NAME NOT ILIKE '%creams%'
+    AND RESTAURANT_NAME NOT ILIKE '%dishoom%'
+    AND RESTAURANT_NAME NOT ILIKE '%enish%'
+    AND RESTAURANT_NAME NOT ILIKE '%farmer j%'
+    AND RESTAURANT_NAME NOT ILIKE '%five guys%'
+    AND RESTAURANT_NAME NOT ILIKE '%g la dalle%'
+    AND RESTAURANT_NAME NOT ILIKE '%doner kebab%'
+    AND RESTAURANT_NAME NOT ILIKE '%gopuff%'
+    AND RESTAURANT_NAME NOT ILIKE '%gourmet sushi%'
+    AND RESTAURANT_NAME NOT ILIKE '%haidilao%'
+    AND RESTAURANT_NAME NOT ILIKE '%heavenly desserts%'
+    AND RESTAURANT_NAME NOT ILIKE '%heytea%'
+    AND RESTAURANT_NAME NOT ILIKE '%the chicken shop%'
+    AND RESTAURANT_NAME NOT ILIKE '%joe & the juice%'
+    AND RESTAURANT_NAME NOT ILIKE '%kaspa%'
+    AND RESTAURANT_NAME NOT ILIKE '%kokoro%'
+    AND RESTAURANT_NAME NOT ILIKE '%dessert shop%'
+    AND RESTAURANT_NAME NOT ILIKE '%mcdonald%'
+    AND RESTAURANT_NAME NOT ILIKE '%nando%'
+    AND RESTAURANT_NAME NOT ILIKE '%o''tacos%'
+    AND RESTAURANT_NAME NOT ILIKE '%oodle%'
+    AND RESTAURANT_NAME NOT ILIKE '%papa john%'
+    AND RESTAURANT_NAME NOT ILIKE '%pasta evangel%'
+    AND RESTAURANT_NAME NOT ILIKE '%pepe chicken%'
+    AND RESTAURANT_NAME NOT ILIKE '%peppers%'
+    AND RESTAURANT_NAME NOT ILIKE '%pizza hut%'
+    AND RESTAURANT_NAME NOT ILIKE '%popeyes%'
+    AND RESTAURANT_NAME NOT ILIKE '%quick%'
+    AND RESTAURANT_NAME NOT ILIKE '%rio''s%'
+    AND RESTAURANT_NAME NOT ILIKE '%sainsbury%'
+    AND RESTAURANT_NAME NOT ILIKE '%sam''s chicken%'
+    AND RESTAURANT_NAME NOT ILIKE '%regency barbican%'
+    AND RESTAURANT_NAME NOT ILIKE '%sobe burger%'
+    AND RESTAURANT_NAME NOT ILIKE '%subway%'
+    AND RESTAURANT_NAME NOT ILIKE '%taco bell%'
+    AND RESTAURANT_NAME NOT ILIKE '%tasty african%'
+    AND RESTAURANT_NAME NOT ILIKE '%urban chocolatier%'
+    AND RESTAURANT_NAME NOT ILIKE '%three uncles%'
+    AND RESTAURANT_NAME NOT ILIKE '%wagamama%'
+    AND RESTAURANT_NAME NOT ILIKE '%waitrose%'
+    AND RESTAURANT_NAME NOT ILIKE '%white men can''t jerk%'
+    AND RESTAURANT_NAME NOT ILIKE '%zapp%'
+    AND RESTAURANT_NAME NOT ILIKE '%Starbucks%'
+
+ORDER BY 
+    EFW_RATE DESC,
+    EFWS DESC;
