@@ -1,0 +1,68 @@
+WITH restaurants_2025 AS (
+    SELECT
+          r.id AS restaurant_id
+    FROM PRODUCTION.ORDERWEB.RESTAURANT_ACCOUNT AS r
+    WHERE r.CREATED_AT >= DATE '2025-01-01'   -- restaurants created in 2025
+      AND r.CREATED_AT <  DATE '2026-01-01'
+),
+
+orders_2025_delivered AS (
+    SELECT
+          o.RESTAURANT_ID
+        , MIN(o.RESTAURANT_NAME)          AS RESTAURANT_NAME
+        , MIN(o.RESTAURANT_COMPANY_NAME)  AS RESTAURANT_COMPANY_NAME
+        , MIN(o.RESTAURANT_TYPE)          AS RESTAURANT_TYPE
+        , MIN(o.COUNTRY_NAME)             AS COUNTRY_NAME
+        , COUNT(DISTINCT o.ID)            AS TOTAL_DELIVERED_ORDERS
+    FROM PRODUCTION.DENORMALISED.ORDERS AS o
+    WHERE o.STATUS = 'DELIVERED'
+      AND o.COUNTRY_NAME IN (
+            'UK','France','Italy','Belgium',
+            'Ireland','Kuwait','United Arab Emirates'
+          )
+      AND o.ORDER_DATE >= DATE '2025-01-01'   -- orders in 2025
+      AND o.ORDER_DATE <  DATE '2026-01-01'
+    GROUP BY
+        o.RESTAURANT_ID
+),
+
+claims_omdnr_2025 AS (
+    SELECT
+          c.RESTAURANT_ID
+        , COUNT(DISTINCT c.CLAIM_ID)          AS TOTAL_CLAIMS
+        , COUNT(DISTINCT c.USER_ID)           AS TOTAL_USERS
+        , COUNT(DISTINCT c.ORDER_ID)          AS TOTAL_ORDERS
+        , SUM(c.CLAIM_AMOUNT_GBP)             AS TOTAL_CLAIMS_AMOUNT
+        , SUM(c.COMPENSATED_AMOUNT_GBP)       AS TOTAL_COMPENSATED_AMOUNT
+    FROM PRODUCTION.DENORMALISED.COMPENSATION_CLAIMS AS c
+    WHERE c.ORDER_DATE >= DATE '2025-01-01'       -- orders in 2025
+      AND c.ORDER_DATE <  DATE '2026-01-01'
+      --AND c.CLAIM_OUTCOME = 'successful'          -- successful claims only
+      AND c.CLAIM_REASON  = 'Order Delivered Not Received'  -- OMDNR
+    GROUP BY
+        c.RESTAURANT_ID
+)
+
+SELECT
+      o.RESTAURANT_ID
+    , o.RESTAURANT_NAME
+    , o.RESTAURANT_COMPANY_NAME
+    , o.RESTAURANT_TYPE
+    , o.COUNTRY_NAME
+
+    , o.TOTAL_DELIVERED_ORDERS
+    , c.TOTAL_CLAIMS
+    , c.TOTAL_USERS
+    , c.TOTAL_ORDERS
+    , c.TOTAL_CLAIMS_AMOUNT
+    , c.TOTAL_COMPENSATED_AMOUNT
+
+    , (c.TOTAL_CLAIMS * 1.0 / NULLIF(o.TOTAL_DELIVERED_ORDERS, 0))       AS CLAIM_RATE_RATIO
+    , (c.TOTAL_CLAIMS * 100.0 / NULLIF(o.TOTAL_DELIVERED_ORDERS, 0))     AS CLAIM_RATE_PCT
+FROM restaurants_2025 r
+JOIN orders_2025_delivered o
+    ON o.RESTAURANT_ID = r.RESTAURANT_ID        
+JOIN claims_omdnr_2025 c
+    ON c.RESTAURANT_ID = r.RESTAURANT_ID        
+WHERE c.TOTAL_CLAIMS >= o.TOTAL_DELIVERED_ORDERS  -- high OMDNR: claims ≥ delivered orders
+ORDER BY CLAIM_RATE_PCT DESC;
