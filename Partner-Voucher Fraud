@@ -1,34 +1,46 @@
 SELECT
     -- Restaurant fields
     r.ID AS RESTAURANT_ID,
-    o.RESTAURANT_NAME AS RESTAURANT_NAME,
+    o.RESTAURANT_NAME,
     o.COUNTRY_NAME,
-    YEAR(r.CREATED_AT) AS RX_Created_Year,
+    r.CREATED_AT AS PX_CREATION_DATE,
+
     -- Delivered orders count
     COUNT(DISTINCT CASE WHEN o.STATUS = 'DELIVERED' THEN o.ID END) AS Total_Orders,
 
     -- Total customers
     COUNT(DISTINCT c.ID) AS Total_Customers,
 
-    -- New vs Old customers
-    COUNT(DISTINCT CASE WHEN YEAR(c.CREATED_AT) = 2025 THEN c.ID END) AS New_CX_Count,
-    COUNT(DISTINCT CASE WHEN YEAR(c.CREATED_AT) <> 2025 THEN c.ID END) AS Old_CX_Count,
+    -- New vs Old customers (aligned logic)
+    COUNT(DISTINCT CASE
+        WHEN c.CREATED_AT >= DATE '2025-01-01'
+         AND c.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
+        THEN c.ID
+    END) AS New_CX_Count,
 
-    --New vs Old Percentage (New_CX_Count / Total_Customers)
+    COUNT(DISTINCT CASE
+        WHEN c.CREATED_AT < DATE '2025-01-01'
+        THEN c.ID
+    END) AS Old_CX_Count,
+
+    -- New vs Old Percentage
     CASE 
-        WHEN COUNT(DISTINCT c.ID) = 0 
-            THEN NULL
-        ELSE 
-            (
-                COUNT(DISTINCT CASE WHEN YEAR(c.CREATED_AT) = 2025 THEN c.ID END)
-                /
-                COUNT(DISTINCT c.ID)
-            ) * 100
+        WHEN COUNT(DISTINCT c.ID) = 0 THEN NULL
+        ELSE
+            COUNT(DISTINCT CASE
+                WHEN c.CREATED_AT >= DATE '2025-01-01'
+                 AND c.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
+                THEN c.ID
+            END)::FLOAT
+            / COUNT(DISTINCT c.ID) * 100
     END AS New_vs_Old_Percentage,
 
     -- Voucher vs Non-Voucher Orders
-    COUNT(DISTINCT CASE WHEN pt.PROMOTION_APPLIED IS NOT NULL THEN pt.ORDER_ID END) AS Deliveroo_Voucher_Orders,
-    COUNT(DISTINCT CASE WHEN pt.PROMOTION_APPLIED IS NULL THEN pt.ORDER_ID END) AS Non_Voucher_Orders,
+    COUNT(DISTINCT CASE WHEN pt.PROMOTION_APPLIED IS NOT NULL THEN pt.ORDER_ID END)
+        AS Deliveroo_Voucher_Orders,
+
+    COUNT(DISTINCT CASE WHEN pt.PROMOTION_APPLIED IS NULL THEN pt.ORDER_ID END)
+        AS Non_Voucher_Orders,
 
     -- Financial metrics
     SUM(pt.PROMOTION_APPLIED) AS Deliveroo_Voucher,
@@ -40,7 +52,9 @@ SELECT
     -- Voucher Percentage
     CASE 
         WHEN SUM(pt.TOTAL_INCL_TIP_AND_DONATIONS) = 0 THEN NULL
-        ELSE (SUM(pt.PROMOTION_APPLIED) / SUM(pt.TOTAL_INCL_TIP_AND_DONATIONS)) * 100
+        ELSE
+            SUM(pt.PROMOTION_APPLIED)
+            / SUM(pt.TOTAL_INCL_TIP_AND_DONATIONS) * 100
     END AS Voucher_Percentage
 
 FROM PRODUCTION.ORDERWEB.RESTAURANT_ACCOUNT r
@@ -51,12 +65,46 @@ JOIN production.denormalised.payment_transactions pt
 JOIN production.orderweb.users c
     ON c.ID = o.USER_ID
 
-WHERE YEAR(r.CREATED_AT) = 2025
-  AND o.COUNTRY_NAME IN (
-            'UK','France','Italy','Belgium',
-            'Ireland','Kuwait','United Arab Emirates'
-          )
-  AND o.ORDER_TYPE IN ('CUSTOMER_COLLECTION', 'RESTAURANT_FULFILLED')
+WHERE
+    -- New restaurants (aligned logic)
+    r.CREATED_AT >= DATE '2025-01-01'
+    AND r.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
+
+    AND o.COUNTRY_NAME IN (
+        'UK','France','Italy','Belgium',
+        'Ireland','Kuwait','United Arab Emirates'
+    )
+
+    AND o.ORDER_TYPE IN ('CUSTOMER_COLLECTION', 'RESTAURANT_FULFILLED')
+
+    -- Global brand exclusions
+    AND NOT (
+           o.RESTAURANT_NAME ILIKE '%pepe''s%'
+        OR o.RESTAURANT_NAME ILIKE '%kfc%'
+        OR o.RESTAURANT_NAME ILIKE '%burger king%'
+        OR o.RESTAURANT_NAME ILIKE '%carrefour%'
+        OR o.RESTAURANT_NAME ILIKE '%one stop%'
+        OR o.RESTAURANT_NAME ILIKE '%wingstop%'
+        OR o.RESTAURANT_NAME ILIKE '%morrisons%'
+        OR o.RESTAURANT_NAME ILIKE '%perfume shop%'
+        OR o.RESTAURANT_NAME ILIKE '%asda%'
+        OR o.RESTAURANT_NAME ILIKE '%chipotle%'
+        OR o.RESTAURANT_NAME ILIKE '%auchan%'
+        OR o.RESTAURANT_NAME ILIKE '%applebee%'
+        OR o.RESTAURANT_NAME ILIKE '%boots%'
+        OR o.RESTAURANT_NAME ILIKE '%m&s%'
+        OR o.RESTAURANT_NAME ILIKE '%five guys%'
+        OR o.RESTAURANT_NAME ILIKE '%mcdonald%'
+        OR o.RESTAURANT_NAME ILIKE '%nando%'
+        OR o.RESTAURANT_NAME ILIKE '%pizza hut%'
+        OR o.RESTAURANT_NAME ILIKE '%popeyes%'
+        OR o.RESTAURANT_NAME ILIKE '%subway%'
+        OR o.RESTAURANT_NAME ILIKE '%taco bell%'
+        OR o.RESTAURANT_NAME ILIKE '%wagamama%'
+        OR o.RESTAURANT_NAME ILIKE '%waitrose%'
+        OR o.RESTAURANT_NAME ILIKE '%starbucks%'
+        OR o.RESTAURANT_NAME ILIKE '%domino%'
+    )
 
 GROUP BY
     r.ID,
@@ -65,16 +113,26 @@ GROUP BY
     r.CREATED_AT
 
 HAVING
-    -- Total orders > 0
-    COUNT(DISTINCT CASE WHEN o.STATUS = 'DELIVERED' THEN o.ID END) > 0
+    -- ✅ Minimum volume requirement
+    COUNT(DISTINCT CASE WHEN o.STATUS = 'DELIVERED' THEN o.ID END) >= 20
 
     AND
     -- Voucher percentage > 50%
     SUM(pt.PROMOTION_APPLIED) > 0.5 * SUM(pt.TOTAL_INCL_TIP_AND_DONATIONS)
 
     AND
-    -- New_CX_Count > 50% of Old_CX_Count 
-    COUNT(DISTINCT CASE WHEN YEAR(c.CREATED_AT) = 2025 THEN c.ID END) 
-        > 0.5 *
-          COUNT(DISTINCT CASE WHEN YEAR(c.CREATED_AT) <> 2025 THEN c.ID END)
-          ORDER BY TOTAL_ORDERS DESC;
+    -- New customers > 50% of old customers
+    COUNT(DISTINCT CASE
+        WHEN c.CREATED_AT >= DATE '2025-01-01'
+         AND c.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
+        THEN c.ID
+    END)
+    >
+    0.5 *
+    COUNT(DISTINCT CASE
+        WHEN c.CREATED_AT < DATE '2025-01-01'
+        THEN c.ID
+    END)
+
+ORDER BY
+    New_vs_Old_Percentage DESC;
