@@ -1,92 +1,202 @@
--- Finds Marketplace+ restaurants (created in 2025) that meet specific order criteria (2025 Plus customer, delivered)
--- and where the count of delivered orders from 'new' customers outweighs 'old' customers.
+-- New restaurants = created in 2025 to today
+-- New customers   = account created in 2025 to today
+-- Delivery fee sourced from flexible_payouts.NET (>= 3)
+-- Global brands excluded
 
-WITH filtered_orders AS (
+
+WITH all_delivered_orders AS (
 
     SELECT
-          A.ID                       AS order_id
-        , A.USER_ID                  AS user_id
-        , A.RESTAURANT_ID            AS restaurant_id
-        , A.RESTAURANT_NAME
-        , A.RESTAURANT_COMPANY_NAME
-        , A.RESTAURANT_TYPE
-        , A.DELIVERY_FEE
-        , A.TOTAL_VALUE
-    FROM production.denormalised.orders AS A
+        A.RESTAURANT_ID,
+        COUNT(DISTINCT A.ID) AS total_delivered_orders
+    FROM production.denormalised.orders A
     WHERE
-
-        A.ORDER_DATE >= TO_DATE('2025-01-01')
-        AND A.ORDER_DATE <  TO_DATE('2026-01-01')
-
-        AND A.FULFILLMENT_TYPE = 'Restaurant'
-        AND A.CUSTOMER_TYPE    = 'Plus'
-        AND A.RESTAURANT_TYPE  = 'Marketplace +' -- Added specific restaurant type filter
+        A.STATUS = 'DELIVERED'
+        AND A.ORDER_DATE >= DATE '2025-01-01'
         AND A.COUNTRY_NAME IN (
             'UK','France','Italy','Belgium',
             'Ireland','Kuwait','United Arab Emirates'
         )
-        AND A.DELIVERY_FEE >= 2 
-        AND A.STATUS = 'DELIVERED' 
+    GROUP BY
+        A.RESTAURANT_ID
 ),
+
 filtered_restaurants AS (
 
     SELECT
           B.ID
-        , B.PHONE
-        , B.EMAIL
-        , B.ACTIVE
         , B.CREATED_AT
-    FROM PRODUCTION.ORDERWEB.RESTAURANT_ACCOUNT AS B
+    FROM PRODUCTION.ORDERWEB.RESTAURANT_ACCOUNT B
     WHERE
-        B.CREATED_AT >= TO_DATE('2025-01-01')
-        AND B.CREATED_AT <  TO_DATE('2026-01-01')
+        B.CREATED_AT >= DATE '2025-01-01'
+        AND B.CREATED_AT < DATEADD(day, 1, CURRENT_DATE())
+),
+
+filtered_orders AS (
+
+    SELECT
+          A.ID            AS order_id
+        , A.USER_ID       AS user_id
+        , A.RESTAURANT_ID AS restaurant_id
+        , A.RESTAURANT_NAME
+        , A.COUNTRY_NAME
+        , A.TOTAL_VALUE
+    FROM production.denormalised.orders A
+    WHERE
+        A.ORDER_DATE >= DATE '2025-01-01'
+        AND A.ORDER_DATE < DATEADD(day, 1, CURRENT_DATE())
+
+        AND A.STATUS = 'DELIVERED'
+        AND A.FULFILLMENT_TYPE = 'Restaurant'
+        AND A.RESTAURANT_TYPE  = 'Marketplace +'
+        AND A.COUNTRY_NAME IN (
+            'UK','France','Italy','Belgium',
+            'Ireland','Kuwait','United Arab Emirates'
+        )
+
+        -- Delivery fee qualification via flexible payouts
+        AND EXISTS (
+            SELECT 1
+            FROM production.denormalised.flexible_payouts FP
+            WHERE FP.SOURCE_TRANSACTION_ID = A.ID
+              AND FP.RPA_NOTE = 'Restaurant fulfilled (Delivery fee)'
+              AND FP.NET >= 3
+        )
+
+        -- Global brand exclusions (cleaned list + Domino’s)
+        AND NOT (
+               A.RESTAURANT_NAME ILIKE '%pepe''s%'
+            OR A.RESTAURANT_NAME ILIKE '%kfc%'
+            OR A.RESTAURANT_NAME ILIKE '%burger king%'
+            OR A.RESTAURANT_NAME ILIKE '%carrefour%'
+            OR A.RESTAURANT_NAME ILIKE '%one stop%'
+            OR A.RESTAURANT_NAME ILIKE '%wingstop%'
+            OR A.RESTAURANT_NAME ILIKE '%morrisons%'
+            OR A.RESTAURANT_NAME ILIKE '%perfume shop%'
+            OR A.RESTAURANT_NAME ILIKE '%asda%'
+            OR A.RESTAURANT_NAME ILIKE '%chipotle%'
+            OR A.RESTAURANT_NAME ILIKE '%auchan%'
+            OR A.RESTAURANT_NAME ILIKE '%applebee%'
+            OR A.RESTAURANT_NAME ILIKE '%boots%'
+            OR A.RESTAURANT_NAME ILIKE '%m&s%'
+            OR A.RESTAURANT_NAME ILIKE '%burger & sauce%'
+            OR A.RESTAURANT_NAME ILIKE '%chaiw%'
+            OR A.RESTAURANT_NAME ILIKE '%cheatmeal%'
+            OR A.RESTAURANT_NAME ILIKE '%chick filler%'
+            OR A.RESTAURANT_NAME ILIKE '%chicken cottage%'
+            OR A.RESTAURANT_NAME ILIKE '%chicken street%'
+            OR A.RESTAURANT_NAME ILIKE '%co-op%'
+            OR A.RESTAURANT_NAME ILIKE '%creams%'
+            OR A.RESTAURANT_NAME ILIKE '%dishoom%'
+            OR A.RESTAURANT_NAME ILIKE '%enish%'
+            OR A.RESTAURANT_NAME ILIKE '%farmer j%'
+            OR A.RESTAURANT_NAME ILIKE '%five guys%'
+            OR A.RESTAURANT_NAME ILIKE '%g la dalle%'
+            OR A.RESTAURANT_NAME ILIKE '%gopuff%'
+            OR A.RESTAURANT_NAME ILIKE '%haidilao%'
+            OR A.RESTAURANT_NAME ILIKE '%heavenly desserts%'
+            OR A.RESTAURANT_NAME ILIKE '%heytea%'
+            OR A.RESTAURANT_NAME ILIKE '%the chicken shop%'
+            OR A.RESTAURANT_NAME ILIKE '%joe & the juice%'
+            OR A.RESTAURANT_NAME ILIKE '%kaspa%'
+            OR A.RESTAURANT_NAME ILIKE '%kokoro%'
+            OR A.RESTAURANT_NAME ILIKE '%mcdonald%'
+            OR A.RESTAURANT_NAME ILIKE '%nando%'
+            OR A.RESTAURANT_NAME ILIKE '%o''tacos%'
+            OR A.RESTAURANT_NAME ILIKE '%oodle%'
+            OR A.RESTAURANT_NAME ILIKE '%papa john%'
+            OR A.RESTAURANT_NAME ILIKE '%pasta evangel%'
+            OR A.RESTAURANT_NAME ILIKE '%pepe chicken%'
+            OR A.RESTAURANT_NAME ILIKE '%peppers%'
+            OR A.RESTAURANT_NAME ILIKE '%pizza hut%'
+            OR A.RESTAURANT_NAME ILIKE '%popeyes%'
+            OR A.RESTAURANT_NAME ILIKE '%quick%'
+            OR A.RESTAURANT_NAME ILIKE '%rio''s%'
+            OR A.RESTAURANT_NAME ILIKE '%sainsbury%'
+            OR A.RESTAURANT_NAME ILIKE '%sam''s chicken%'
+            OR A.RESTAURANT_NAME ILIKE '%regency barbican%'
+            OR A.RESTAURANT_NAME ILIKE '%sobe burger%'
+            OR A.RESTAURANT_NAME ILIKE '%subway%'
+            OR A.RESTAURANT_NAME ILIKE '%taco bell%'
+            OR A.RESTAURANT_NAME ILIKE '%tasty african%'
+            OR A.RESTAURANT_NAME ILIKE '%urban chocolatier%'
+            OR A.RESTAURANT_NAME ILIKE '%three uncles%'
+            OR A.RESTAURANT_NAME ILIKE '%wagamama%'
+            OR A.RESTAURANT_NAME ILIKE '%waitrose%'
+            OR A.RESTAURANT_NAME ILIKE '%white men can''t jerk%'
+            OR A.RESTAURANT_NAME ILIKE '%zapp%'
+            OR A.RESTAURANT_NAME ILIKE '%starbucks%'
+            OR A.RESTAURANT_NAME ILIKE '%domino%'
+        )
 )
 
 SELECT
-    fr.ID AS Restaurant_ID
+      fo.restaurant_id
     , fo.RESTAURANT_NAME
-    , fo.RESTAURANT_COMPANY_NAME
-    , fo.RESTAURANT_TYPE
-    , fr.PHONE AS PX_Phone
-    , fr.EMAIL AS PX_Email
-    , fr.ACTIVE AS PX_Acct_Active
-    , fr.CREATED_AT AS PX_Creation_Date
-    , fo.DELIVERY_FEE AS PX_Delivery_Fee
+    , fo.COUNTRY_NAME
+    , fr.CREATED_AT AS px_creation_date
 
-    -- 1. Orders from New Customers 
-    , COUNT(CASE WHEN C.CREATED_AT >= ADD_MONTHS(CURRENT_DATE(), -12) THEN fo.order_id END) AS new_customer_orders
-    -- 2. Total Orders
-    , COUNT(DISTINCT fo.order_id) AS Total_Orders
-    -- 3. Orders from NC Percentage Calculation
+    -- Delivery fee from flexible payouts
+    , MIN(fp.NET) AS delivery_fee
+
+    -- Orders
+    , ao.total_delivered_orders
+
+    -- New customer orders
+    , COUNT(DISTINCT CASE
+        WHEN C.CREATED_AT >= DATE '2025-01-01'
+         AND C.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
+        THEN fo.order_id
+      END) AS new_customer_orders
+
     , ROUND(
-        (COUNT(CASE WHEN C.CREATED_AT >= ADD_MONTHS(CURRENT_DATE(), -12) THEN fo.order_id END) ::FLOAT /
-        NULLIF(COUNT(DISTINCT fo.order_id), 0)) * 100
-    , 0) ::INT AS New_Customer_Orders_Pct
-    , SUM(fo.TOTAL_VALUE) AS Total_Amount
-    , COUNT(DISTINCT CASE WHEN C.CREATED_AT >= ADD_MONTHS(CURRENT_DATE(), -12) THEN C.ID END) AS new_customer_count_unique
-    , COUNT(DISTINCT CASE WHEN C.CREATED_AT < ADD_MONTHS(CURRENT_DATE(), -12) THEN C.ID END) AS old_customer_count_unique
-    , COUNT(DISTINCT fo.user_id) AS Total_Customers 
+        COUNT(DISTINCT CASE
+            WHEN C.CREATED_AT >= DATE '2025-01-01'
+             AND C.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
+            THEN fo.order_id
+        END)::FLOAT
+        / NULLIF(COUNT(DISTINCT fo.order_id), 0) * 100
+      , 0
+      )::INT AS new_customer_orders_pct
+
+    -- Revenue
+    , SUM(fo.TOTAL_VALUE) AS total_amount
+
+    -- Customers
+    , COUNT(DISTINCT fo.user_id) AS total_customers
 
 FROM filtered_orders fo
-INNER JOIN filtered_restaurants fr
+JOIN filtered_restaurants fr
     ON fo.restaurant_id = fr.ID
-INNER JOIN production.orderweb.users AS C 
+JOIN production.orderweb.users C
     ON fo.user_id = C.ID
-    
+LEFT JOIN all_delivered_orders ao
+    ON fo.restaurant_id = ao.RESTAURANT_ID
+JOIN production.denormalised.flexible_payouts fp
+    ON fp.SOURCE_TRANSACTION_ID = fo.order_id
+   AND fp.RPA_NOTE = 'Restaurant fulfilled (Delivery fee)'
+   AND fp.NET >= 3
+
 GROUP BY
-    fr.ID
+      fo.restaurant_id
     , fo.RESTAURANT_NAME
-    , fo.RESTAURANT_COMPANY_NAME
-    , fo.RESTAURANT_TYPE
-    , fr.PHONE
-    , fr.EMAIL
-    , fr.ACTIVE
+    , fo.COUNTRY_NAME
     , fr.CREATED_AT
-    , fo.DELIVERY_FEE
--- Filters results where the count of delivered orders from new customers is greater than old customers.
+    , ao.total_delivered_orders
+
 HAVING
-    COUNT(CASE WHEN C.CREATED_AT >= ADD_MONTHS(CURRENT_DATE(), -12) THEN fo.order_id END) >
-    COUNT(CASE WHEN C.CREATED_AT < ADD_MONTHS(CURRENT_DATE(), -12) THEN fo.order_id END)
+    COUNT(DISTINCT fo.order_id) > 10
+AND
+    COUNT(DISTINCT CASE
+        WHEN C.CREATED_AT >= DATE '2025-01-01'
+         AND C.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
+        THEN fo.order_id
+    END)
+    >
+    COUNT(DISTINCT CASE
+        WHEN C.CREATED_AT < DATE '2025-01-01'
+        THEN fo.order_id
+    END)
 
 ORDER BY
-    PX_Delivery_Fee DESC;
+    delivery_fee DESC;
