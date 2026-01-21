@@ -1,8 +1,9 @@
 -- New restaurants = created in 2025 to today
 -- New customers   = account created in 2025 to today
 -- Delivery fee sourced from flexible_payouts.NET (>= 3)
--- Global brands excluded
-
+-- New_Customer_Pct = new customer orders / total delivered orders
+-- New_Customer_Pct > 50%
+-- Total_Delivered_Orders > 20
 
 WITH all_delivered_orders AS (
 
@@ -63,7 +64,7 @@ filtered_orders AS (
               AND FP.NET >= 3
         )
 
-        -- Global brand exclusions (cleaned list + Domino’s)
+        -- Global brand exclusions
         AND NOT (
                A.RESTAURANT_NAME ILIKE '%pepe''s%'
             OR A.RESTAURANT_NAME ILIKE '%kfc%'
@@ -126,7 +127,7 @@ filtered_orders AS (
             OR A.RESTAURANT_NAME ILIKE '%white men can''t jerk%'
             OR A.RESTAURANT_NAME ILIKE '%zapp%'
             OR A.RESTAURANT_NAME ILIKE '%starbucks%'
-            OR A.RESTAURANT_NAME ILIKE '%domino%'
+            OR A.RESTAURANT_NAME ILIKE '%dominos%'
         )
 )
 
@@ -136,13 +137,9 @@ SELECT
     , fo.COUNTRY_NAME
     , fr.CREATED_AT AS px_creation_date
 
-    -- Delivery fee from flexible payouts
     , MIN(fp.NET) AS delivery_fee
-
-    -- Orders
     , ao.total_delivered_orders
 
-    -- New customer orders
     , COUNT(DISTINCT CASE
         WHEN C.CREATED_AT >= DATE '2025-01-01'
          AND C.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
@@ -155,14 +152,10 @@ SELECT
              AND C.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
             THEN fo.order_id
         END)::FLOAT
-        / NULLIF(COUNT(DISTINCT fo.order_id), 0) * 100
-      , 0
-      )::INT AS new_customer_orders_pct
+        / NULLIF(ao.total_delivered_orders, 0) * 100
+    , 2) AS new_customer_orders_pct
 
-    -- Revenue
     , SUM(fo.TOTAL_VALUE) AS total_amount
-
-    -- Customers
     , COUNT(DISTINCT fo.user_id) AS total_customers
 
 FROM filtered_orders fo
@@ -185,18 +178,16 @@ GROUP BY
     , ao.total_delivered_orders
 
 HAVING
-    COUNT(DISTINCT fo.order_id) > 10
+    ao.total_delivered_orders > 20
 AND
-    COUNT(DISTINCT CASE
-        WHEN C.CREATED_AT >= DATE '2025-01-01'
-         AND C.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
-        THEN fo.order_id
-    END)
-    >
-    COUNT(DISTINCT CASE
-        WHEN C.CREATED_AT < DATE '2025-01-01'
-        THEN fo.order_id
-    END)
+    (
+        COUNT(DISTINCT CASE
+            WHEN C.CREATED_AT >= DATE '2025-01-01'
+             AND C.CREATED_AT <  DATEADD(day, 1, CURRENT_DATE())
+            THEN fo.order_id
+        END)::FLOAT
+        / NULLIF(ao.total_delivered_orders, 0)
+    ) > 0.50
 
 ORDER BY
-    delivery_fee DESC;
+    new_customer_orders_pct DESC;
